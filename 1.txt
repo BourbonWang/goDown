@@ -1,0 +1,17 @@
+网络错误，用户暂停-》puase：
+    停止goroutine
+
+关闭程序 =》 pause: 
+    停止goroutine
+    task -> .json                    
+                  
+
+继续： alive
+      
+启动： 读 .json
+      new task
+      -> queue
+      pause      
+      down
+ 
+             
