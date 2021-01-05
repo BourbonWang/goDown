@@ -1,17 +1,5 @@
-网络错误，用户暂停-》puase：
-    停止goroutine
+单文件 多文件下载
+信息
+文件转存
 
-关闭程序 =》 pause: 
-    停止goroutine
-    task -> .json                    
-                  
-
-继续： alive
-      
-启动： 读 .json
-      new task
-      -> queue
-      pause      
-      down
- 
              

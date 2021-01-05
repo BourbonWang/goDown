@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"mime"
@@ -15,11 +16,6 @@ import (
 )
 
 func (task *DownloadTask) Down() error {
-	//建立连接
-	err := task.getResponseFile()
-	if err != nil {
-		return err
-	}
 	//创建文件
 	file, err := os.Create("files/" + task.Name)
 	if err != nil {
@@ -31,60 +27,50 @@ func (task *DownloadTask) Down() error {
 	}
 	task.File = file
 
-	fmt.Printf("%s would cost %s\n", task.Name, sizeString(task.Size))
-	fmt.Printf("sure to download? (y / n)")
-	var sure byte
-	fmt.Scanf("%c", &sure)
-	if sure == 'y' || sure == 'Y' {
-		if task.SupportRange {
-			chunkNum := int(task.Size/task.ChunkSize) + 1
-			//下载队列
-			task.Wg = &sync.WaitGroup{}
-			task.Wg.Add(chunkNum)
-			task.Queue = make(chan [2]int64, chunkNum)
-			for i := 0; i < chunkNum; i++ {
-				start := int64(i) * task.ChunkSize
-				end := start + task.ChunkSize
-				if i == chunkNum-1 {
-					end = task.Size
-				}
-				task.Queue <- [2]int64{start, end - 1}
-			}
-			fmt.Printf("start download\n")
-			go task.BindHTTPErr()
-			//多线程下载
-			for i := 0; i < task.ThreadNum; i++ {
-				go task.mutithreadDown(i)
-			}
-			task.Wg.Wait()
+	wg := &sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+	go task.BindHTTPErr(cancel)
 
-		} else {
-			task.Queue = make(chan [2]int64, 1)
-			task.Queue <- [2]int64{0, task.Size - 1}
-			task.Wg = &sync.WaitGroup{}
-			task.Wg.Add(1)
-			go task.mutithreadDown(0)
-			task.Wg.Wait()
+	if task.SupportRange {
+		chunkNum := int(task.Size/task.ChunkSize) + 1
+		//下载队列
+		task.Queue = make(chan [2]int64, chunkNum)
+		for i := 0; i < chunkNum; i++ {
+			start := int64(i) * task.ChunkSize
+			end := start + task.ChunkSize
+			if i == chunkNum-1 {
+				end = task.Size
+			}
+			task.Queue <- [2]int64{start, end - 1}
 		}
-		fmt.Println("download complete!")
+		fmt.Printf("start download\n")
+
+		//多线程下载
+		wg.Add(task.ThreadNum)
+		for i := 0; i < task.ThreadNum; i++ {
+			go task.mutithreadDown(ctx, wg, i)
+		}
 
 	} else {
-		err := os.Remove("files/" + task.Name)
-		if err != nil {
-			return err
-		}
+		task.Queue = make(chan [2]int64, 1)
+		task.Queue <- [2]int64{0, task.Size - 1}
+		wg.Add(1)
+		go task.mutithreadDown(ctx, wg, 0)
 	}
+	wg.Wait()
+
+	fmt.Println("task finish")
+
 	task.Finish()
 	return nil
 }
 
-func (task *DownloadTask) getResponseFile() error {
+func (task *DownloadTask) GetResponseFile() error {
 	req, err := buildHTTPRequest("HEAD", task.URL, task.Header)
 	if err != nil {
 		return fmt.Errorf("ERROR: create http request failed\n")
 	}
 	//创建http连接
-	fmt.Println("HTTP connecting...")
 	req.Header.Add("Range", "bytes=0-0")
 	jar, _ := cookiejar.New(nil)
 	httpClient := http.Client{Jar: jar}
@@ -142,14 +128,25 @@ func (task *DownloadTask) getResponseFile() error {
 	return nil
 }
 
-func (task *DownloadTask) mutithreadDown(index int) {
+func (task *DownloadTask) mutithreadDown(ctx context.Context, wg *sync.WaitGroup, index int) {
 	for {
 		for task.Status == PAUSE {
 		} //等待暂停
-		arr := <-task.Queue
-		start, end := arr[0], arr[1]
-		fmt.Printf("%d Downloading: %d to %d\n", index, start, end)
-		task.downChunk(start, end)
+		select {
+		case <-ctx.Done():
+			wg.Done()
+			return
+		default:
+			if len(task.Queue) == 0 {
+				wg.Done()
+				return
+			}
+			arr := <-task.Queue
+			start, end := arr[0], arr[1]
+			fmt.Printf("%d Downloading: %d to %d\n", index, start, end)
+			task.downChunk(start, end)
+		}
+
 	}
 }
 
@@ -182,6 +179,7 @@ func (task *DownloadTask) downChunk(start int64, end int64) {
 				return
 			}
 			index += int64(writeSize)
+
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -192,7 +190,6 @@ func (task *DownloadTask) downChunk(start int64, end int64) {
 			break
 		}
 	}
-	task.Wg.Done()
 }
 
 //创建http请求头

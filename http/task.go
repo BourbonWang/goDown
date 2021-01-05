@@ -3,7 +3,6 @@ package http
 import (
 	"log"
 	"os"
-	"sync"
 )
 
 var (
@@ -18,8 +17,6 @@ var (
 
 	ALIVE int = 1
 	PAUSE int = 2
-
-	TaskGroup map[string]*DownloadTask
 )
 
 type DownloadTask struct {
@@ -32,10 +29,9 @@ type DownloadTask struct {
 	ChunkSize    int64
 	ThreadNum    int
 	File         *os.File
-	Wg           *sync.WaitGroup
 	Queue        chan [2]int64
-
-	ErrControl HTTPErr
+	PrintPbIdx   int
+	ErrControl   HTTPErr
 }
 
 func NewTask(url string) *DownloadTask {
@@ -51,7 +47,7 @@ func NewTask(url string) *DownloadTask {
 		ThreadNum: 16,
 		Status:    ALIVE,
 	}
-	TaskGroup[url] = task
+
 	return task
 }
 

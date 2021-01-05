@@ -1,8 +1,13 @@
 package http
 
-import "sync"
+import (
+	"context"
+	"fmt"
+	"sync"
+)
 
 func (task *DownloadTask) Pause() {
+	fmt.Println("pause")
 	task.Status = PAUSE
 }
 
@@ -28,11 +33,16 @@ type HTTPErr struct {
 	mu     sync.Mutex
 }
 
-func (task *DownloadTask) BindHTTPErr() {
+func (task *DownloadTask) BindHTTPErr(cancel context.CancelFunc) {
 	for {
 		if task.Status == ALIVE && task.ErrControl.ErrNum >= 16 {
 			task.Pause()
 		}
+		//检测网络
+
+		//取消任务，保存
+
+		//cancel()
 	}
 }
 

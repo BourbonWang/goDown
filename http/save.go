@@ -1,9 +1,5 @@
 package http
 
-import (
-	"os"
-)
-
 var PATH = "task.json"
 
 type info struct {
@@ -21,6 +17,7 @@ type infoList struct {
 	task []info
 }
 
+/**
 func Save() error {
 	list := infoList{}
 	for _, task := range TaskGroup {
@@ -51,3 +48,4 @@ func task2info(task *DownloadTask) *info {
 	}
 
 }
+**/
