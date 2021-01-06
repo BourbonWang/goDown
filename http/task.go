@@ -17,7 +17,7 @@ var (
 		"User-Agent":      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.111 Safari/537.36",
 		//"Connection":      "keep-alive",
 	}
-	ReconnectNum = 10
+	ReconnectNum = 5
 	SaveTempFile = true
 	BasePath     = "files/"
 
@@ -67,6 +67,7 @@ func NewDownload(urls ...string) error {
 	if sure == 'y' || sure == 'Y' {
 		PB = cmd.NewPb(int(size/1024/1024), len(urls)+1)
 		go PB.Bind()
+		fmt.Println()
 		wg := &sync.WaitGroup{}
 		wg.Add(len(urls))
 		for i, url := range urls {
@@ -80,14 +81,6 @@ func NewDownload(urls ...string) error {
 		wg.Wait()
 		PB.PrintTail()
 		fmt.Println()
-		if SaveTempFile {
-			err := Save()
-			if err != nil {
-				fmt.Println(err)
-			} else {
-				fmt.Println("已保存临时文件")
-			}
-		}
 		fmt.Printf("下载结束")
 	}
 	return nil

@@ -80,16 +80,15 @@ func (task *DownloadTask) GetResponseFile() error {
 
 func (task *DownloadTask) CreateFile() error {
 	t := time.Now().Unix()
-	file, err := os.Create(BasePath + strconv.Itoa(int(t)))
+	file, err := os.Create(BasePath + strconv.Itoa(int(t)+task.PrintPbIdx))
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 	if err := file.Truncate(task.Size); err != nil {
 		return nil
 	}
 	task.File = file
-	task.FileName = BasePath + strconv.Itoa(int(t))
+	task.FileName = BasePath + strconv.Itoa(int(t)+task.PrintPbIdx)
 	return nil
 }
 

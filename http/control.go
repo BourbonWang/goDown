@@ -6,6 +6,7 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"sync"
+	"time"
 )
 
 func (task *DownloadTask) Pause() {
@@ -24,6 +25,7 @@ func (task *DownloadTask) Finish(wg *sync.WaitGroup) {
 	if _, ok := TaskGroup[task.URL]; ok {
 		delete(TaskGroup, task.URL)
 	}
+	task.File.Close()
 	wg.Done()
 }
 
@@ -34,7 +36,7 @@ type HTTPErr struct {
 
 func (task *DownloadTask) BindHTTPErr(cancel context.CancelFunc) {
 	for {
-		if task.Status == ALIVE && task.ErrControl.ErrNum >= 16 {
+		if task.Status == ALIVE && task.ErrControl.ErrNum >= 10 {
 			PB.Print(task.PrintPbIdx, "正在重连")
 			task.Pause()
 			//检测网络
@@ -45,7 +47,10 @@ func (task *DownloadTask) BindHTTPErr(cancel context.CancelFunc) {
 				}
 				req.Header.Add("Range", "bytes=0-0")
 				jar, _ := cookiejar.New(nil)
-				httpClient := http.Client{Jar: jar}
+				httpClient := http.Client{
+					Jar:     jar,
+					Timeout: 10 * time.Second,
+				}
 				res, err := httpClient.Do(req)
 				if err != nil {
 					continue
@@ -71,6 +76,7 @@ func (task *DownloadTask) BindHTTPErr(cancel context.CancelFunc) {
 				}
 				PB.Print(task.PrintPbIdx, "下载失败")
 				cancel()
+				task.Continue()
 				return
 			}
 		}
@@ -87,4 +93,5 @@ func (task *DownloadTask) AddHTTPErr() {
 func (task *DownloadTask) save() {
 	info := task2info(task)
 	TaskSaveList.Tasks = append(TaskSaveList.Tasks, *info)
+	Save()
 }

@@ -132,7 +132,7 @@ func info2task(info *info) *DownloadTask {
 	for _, q := range info.Queue {
 		task.Queue <- q
 	}
-	file, err := os.Open(info.FileName)
+	file, err := os.OpenFile(info.FileName, os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		log.Fatal(err)
 	}
