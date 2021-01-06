@@ -15,56 +15,6 @@ import (
 	"time"
 )
 
-func (task *DownloadTask) Down() error {
-	//创建文件
-	file, err := os.Create("files/" + task.Name)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if err := file.Truncate(task.Size); err != nil {
-		return nil
-	}
-	task.File = file
-
-	wg := &sync.WaitGroup{}
-	ctx, cancel := context.WithCancel(context.Background())
-	go task.BindHTTPErr(cancel)
-
-	if task.SupportRange {
-		chunkNum := int(task.Size/task.ChunkSize) + 1
-		//下载队列
-		task.Queue = make(chan [2]int64, chunkNum)
-		for i := 0; i < chunkNum; i++ {
-			start := int64(i) * task.ChunkSize
-			end := start + task.ChunkSize
-			if i == chunkNum-1 {
-				end = task.Size
-			}
-			task.Queue <- [2]int64{start, end - 1}
-		}
-		fmt.Printf("start download\n")
-
-		//多线程下载
-		wg.Add(task.ThreadNum)
-		for i := 0; i < task.ThreadNum; i++ {
-			go task.mutithreadDown(ctx, wg, i)
-		}
-
-	} else {
-		task.Queue = make(chan [2]int64, 1)
-		task.Queue <- [2]int64{0, task.Size - 1}
-		wg.Add(1)
-		go task.mutithreadDown(ctx, wg, 0)
-	}
-	wg.Wait()
-
-	fmt.Println("task finish")
-
-	task.Finish()
-	return nil
-}
-
 func (task *DownloadTask) GetResponseFile() error {
 	req, err := buildHTTPRequest("HEAD", task.URL, task.Header)
 	if err != nil {
@@ -128,22 +78,80 @@ func (task *DownloadTask) GetResponseFile() error {
 	return nil
 }
 
+func (task *DownloadTask) CreateFile() error {
+	t := time.Now().Unix()
+	file, err := os.Create(BasePath + strconv.Itoa(int(t)))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := file.Truncate(task.Size); err != nil {
+		return nil
+	}
+	task.File = file
+	task.FileName = BasePath + strconv.Itoa(int(t))
+	return nil
+}
+
+func (task *DownloadTask) Down(groupwg *sync.WaitGroup) error {
+	wg := &sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+	go task.BindHTTPErr(cancel)
+
+	if task.SupportRange {
+		chunkNum := 0
+		if task.SaveLoad {
+			//如果是从临时文件读取
+			chunkNum = len(task.Queue)
+		} else {
+			//新任务
+			chunkNum = int(task.Size/task.ChunkSize) + 1
+			//下载队列
+			task.Queue = make(chan [2]int64, chunkNum)
+			for i := 0; i < chunkNum; i++ {
+				start := int64(i) * task.ChunkSize
+				end := start + task.ChunkSize
+				if i == chunkNum-1 {
+					end = task.Size
+				}
+				task.Queue <- [2]int64{start, end - 1}
+			}
+		}
+		PB.SetMaxNum(task.PrintPbIdx, chunkNum)
+		//多线程下载
+		wg.Add(task.ThreadNum)
+		for i := 0; i < task.ThreadNum; i++ {
+			go task.mutithreadDown(ctx, wg, i)
+		}
+
+	} else {
+		PB.SetMaxNum(task.PrintPbIdx, 1)
+
+		task.Queue = make(chan [2]int64, 1)
+		task.Queue <- [2]int64{0, task.Size - 1}
+		wg.Add(1)
+		go task.mutithreadDown(ctx, wg, 0)
+	}
+	wg.Wait()
+	os.Rename(task.File.Name(), BasePath+task.Name)
+	task.Finish(groupwg)
+	return nil
+}
+
 func (task *DownloadTask) mutithreadDown(ctx context.Context, wg *sync.WaitGroup, index int) {
+	defer wg.Done()
 	for {
 		for task.Status == PAUSE {
 		} //等待暂停
 		select {
 		case <-ctx.Done():
-			wg.Done()
 			return
 		default:
 			if len(task.Queue) == 0 {
-				wg.Done()
 				return
 			}
 			arr := <-task.Queue
 			start, end := arr[0], arr[1]
-			fmt.Printf("%d Downloading: %d to %d\n", index, start, end)
 			task.downChunk(start, end)
 		}
 
@@ -156,11 +164,11 @@ func (task *DownloadTask) downChunk(start int64, end int64) {
 	jar, _ := cookiejar.New(nil)
 	httpClient := http.Client{
 		Jar:     jar,
-		Timeout: 15 * time.Second,
+		Timeout: 30 * time.Second,
 	}
 	httpRes, err := httpClient.Do(httpReq)
 	if err != nil {
-		fmt.Println(err)
+		//fmt.Println(err)
 		task.Queue <- [2]int64{start, end}
 		task.AddHTTPErr()
 		return
@@ -183,13 +191,15 @@ func (task *DownloadTask) downChunk(start int64, end int64) {
 		}
 		if err != nil {
 			if err != io.EOF {
-				fmt.Println(err)
+				//fmt.Println(err)
 				task.Queue <- [2]int64{start, end}
 				return
 			}
 			break
 		}
 	}
+	//更新控制台进度条
+	PB.Add(task.PrintPbIdx)
 }
 
 //创建http请求头

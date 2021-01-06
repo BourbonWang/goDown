@@ -1,38 +1,90 @@
 package http
 
 import (
-	"download/cmd"
-	"fmt"
+	"context"
+	"net/http"
+	"net/http/cookiejar"
+	"os"
+	"sync"
 )
 
-var TaskGroup map[string]*DownloadTask
+func (task *DownloadTask) Pause() {
+	task.Status = PAUSE
+}
 
-func NewDownload(urls ...string) error {
-	fmt.Println("HTTP connecting...")
-	num := 0
-	size := int64(0)
-	for _, url := range urls {
-		task := NewTask(url)
-		err := task.GetResponseFile()
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s\n", task.Name)
-		task.PrintPbIdx = num
-		TaskGroup[url] = task
-		num++
-		size += task.Size
+func (task *DownloadTask) Continue() {
+	task.ErrControl.mu.Lock()
+	task.ErrControl.ErrNum = 0
+	task.ErrControl.mu.Unlock()
+	task.Status = ALIVE
+}
+
+func (task *DownloadTask) Finish(wg *sync.WaitGroup) {
+	PB.Print(task.PrintPbIdx, "已完成")
+	if _, ok := TaskGroup[task.URL]; ok {
+		delete(TaskGroup, task.URL)
 	}
-	fmt.Printf("共%d个任务，花费空间 %s, 是否继续？(y/n)", num, sizeString(size))
-	var sure byte
-	fmt.Scanf("%c", &sure)
-	if sure == 'y' || sure == 'Y' {
-		pb := cmd.PrintPb{}
-		cmd.chpb = make(chan cmd.PrintInfo, size/1024/1024)
-		go pb.bind()
-		for _, url := range urls {
-			go TaskGroup[url].Down()
+	wg.Done()
+}
+
+type HTTPErr struct {
+	ErrNum int
+	mu     sync.Mutex
+}
+
+func (task *DownloadTask) BindHTTPErr(cancel context.CancelFunc) {
+	for {
+		if task.Status == ALIVE && task.ErrControl.ErrNum >= 16 {
+			PB.Print(task.PrintPbIdx, "正在重连")
+			task.Pause()
+			//检测网络
+			for i := 0; i < ReconnectNum; i++ {
+				req, err := buildHTTPRequest("HEAD", task.URL, task.Header)
+				if err != nil {
+					continue
+				}
+				req.Header.Add("Range", "bytes=0-0")
+				jar, _ := cookiejar.New(nil)
+				httpClient := http.Client{Jar: jar}
+				res, err := httpClient.Do(req)
+				if err != nil {
+					continue
+				}
+				if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusPartialContent {
+					continue
+				}
+				res.Body.Close()
+
+				PB.Print(task.PrintPbIdx, "恢复中")
+				task.ErrControl.mu.Lock()
+				task.ErrControl.ErrNum = 0
+				task.ErrControl.mu.Unlock()
+				task.Continue()
+				break
+			}
+			//重连失败,保存或失败
+			if task.Status == PAUSE {
+				if SaveTempFile {
+					task.save()
+				} else {
+					os.Remove("files/" + task.File.Name())
+				}
+				PB.Print(task.PrintPbIdx, "下载失败")
+				cancel()
+				return
+			}
 		}
+
 	}
-	return nil
+}
+
+func (task *DownloadTask) AddHTTPErr() {
+	task.ErrControl.mu.Lock()
+	task.ErrControl.ErrNum++
+	task.ErrControl.mu.Unlock()
+}
+
+func (task *DownloadTask) save() {
+	info := task2info(task)
+	TaskSaveList.Tasks = append(TaskSaveList.Tasks, *info)
 }
